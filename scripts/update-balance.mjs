@@ -37,9 +37,14 @@ async function main() {
   }
 
   // La structure de l'API a changé au fil du temps, on essaie plusieurs chemins
-  const purse = member.currencies?.coin_purse ?? member.coin_purse ?? 0;
-  const bank = profile.banking?.balance ?? 0;
-  const total = Math.round(purse + bank);
+  const purse = Math.round(member.currencies?.coin_purse ?? member.coin_purse ?? 0);
+  const bankingAvailable = profile.banking && typeof profile.banking.balance === 'number';
+  const bank = bankingAvailable ? Math.round(profile.banking.balance) : 0;
+  const total = purse + bank;
+
+  if (!bankingAvailable) {
+    console.warn('⚠️ Aucune donnée de banque reçue : active "Banking" dans les paramètres API en jeu (/api).');
+  }
 
   console.log(`Profil: ${profile.cute_name || profile.profile_id} | Purse: ${purse} | Banque: ${bank} | Total: ${total}`);
 
