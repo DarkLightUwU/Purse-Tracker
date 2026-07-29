@@ -7,7 +7,7 @@ const API_KEY = process.env.HYPIXEL_API_KEY;
 const UUID = process.env.MC_UUID; // UUID Minecraft SANS tirets
 
 if (!API_KEY || !UUID) {
-  console.error('HYPIXEL_API_KEY ou MC_UUID manquant (vérifie les secrets/variables du repo).');
+  console.error('HYPIXEL_API_KEY ou MC_UUID manquant.');
   process.exit(1);
 }
 
@@ -17,51 +17,65 @@ async function main() {
   const data = await res.json();
 
   if (!data.success) {
-    console.error('Erreur API Hypixel:', data.cause || JSON.stringify(data));
+    console.error('Erreur API Hypixel :', data.cause || JSON.stringify(data));
     process.exit(1);
   }
 
   const profiles = data.profiles || [];
+
   if (profiles.length === 0) {
-    console.error('Aucun profil SkyBlock trouvé pour cet UUID.');
+    console.error('Aucun profil trouvé.');
     process.exit(1);
   }
 
-  // Le profil actuellement joué (celui sur lequel tu es entré en dernier)
   const profile = profiles.find(p => p.selected) || profiles[0];
   const member = profile.members?.[UUID];
 
   if (!member) {
-    console.error('Membre introuvable dans le profil sélectionné.');
+    console.error('Membre introuvable.');
     process.exit(1);
   }
 
-  // La structure de l'API a changé au fil du temps, on essaie plusieurs chemins
-  const purse = Math.round(member.currencies?.coin_purse ?? member.coin_purse ?? 0);
-  const bankingAvailable = profile.banking && typeof profile.banking.balance === 'number';
-  const bank = bankingAvailable ? Math.round(profile.banking.balance) : 0;
+  // Décommente si tu veux voir tout le JSON du profil
+  // console.log(JSON.stringify(profile, null, 2));
+
+  // Purse
+  const purse = Math.round(
+    member.currencies?.coin_purse ??
+    member.coin_purse ??
+    0
+  );
+
+  // Banque (compatibilité plusieurs formats)
+  const bank = Math.round(
+    profile.bank_account ??
+    profile.banking?.balance ??
+    profile.profile?.bank_account ??
+    0
+  );
+
   const total = purse + bank;
 
-  if (!bankingAvailable) {
-    console.warn('⚠️ Aucune donnée de banque reçue : active "Banking" dans les paramètres API en jeu (/api).');
-  }
-
-  console.log(`Profil: ${profile.cute_name || profile.profile_id} | Purse: ${purse} | Banque: ${bank} | Total: ${total}`);
+  console.log('------------------------------');
+  console.log(`Profil : ${profile.cute_name}`);
+  console.log(`Purse  : ${purse.toLocaleString()}`);
+  console.log(`Bank   : ${bank.toLocaleString()}`);
+  console.log(`Total  : ${total.toLocaleString()}`);
+  console.log('------------------------------');
 
   let entries = {};
-  try {
-    const raw = await readFile('data.json', 'utf-8');
-    entries = JSON.parse(raw);
-  } catch (e) {
-    entries = {};
-  }
 
-  // Date du jour (UTC). Change 'sv-SE' timezone-aware si tu veux un autre fuseau.
+  try {
+    const raw = await readFile('data.json', 'utf8');
+    entries = JSON.parse(raw);
+  } catch {}
+
   const today = new Date().toISOString().slice(0, 10);
   entries[today] = total;
 
   await writeFile('data.json', JSON.stringify(entries, null, 2));
-  console.log(`data.json mis à jour pour ${today} : ${total} coins`);
+
+  console.log(`data.json mis à jour : ${today} -> ${total.toLocaleString()} coins`);
 }
 
 main().catch(err => {
