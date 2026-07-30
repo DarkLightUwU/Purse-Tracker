@@ -359,6 +359,8 @@
   const tooltip = document.getElementById('tooltip');
   const ctx = canvas.getContext('2d');
   const rangeTabs = document.getElementById('rangeTabs');
+  const trendToggle = document.getElementById('trendToggle');
+  const exportCsvBtn = document.getElementById('exportCsvBtn');
   const goalInput = document.getElementById('goalInput');
   const goalSaveBtn = document.getElementById('goalSaveBtn');
   const goalProgressFill = document.getElementById('goalProgressFill');
@@ -428,6 +430,7 @@
   }
 
   function formatAxisLabel(ts, sameDay){
+    if(currentRange !== 'day') return formatDateShort(ts);
     const dt = new Date(ts);
     const hh = String(dt.getHours()).padStart(2,'0');
     const mi = String(dt.getMinutes()).padStart(2,'0');
@@ -526,6 +529,7 @@
 
   function render(){
     renderStats();
+    renderRecords();
     renderTable();
     renderChart();
     renderGoal();
@@ -627,6 +631,38 @@
       : `${formatCoins(goal-current)} restants`;
   }
 
+  function renderRecords(){
+    const allKeys = sortedKeys();
+    const dailyKeys = Array.from(new Map(allKeys.map(key => [localDayKey(key), key])).values());
+    const bestEl = document.getElementById('recBestDay');
+    const worstEl = document.getElementById('recWorstDay');
+    const streakEl = document.getElementById('recStreak');
+    if(dailyKeys.length < 2){
+      bestEl.textContent = '—';
+      worstEl.textContent = '—';
+      streakEl.textContent = '—';
+      document.getElementById('recBestDayDate').textContent = 'Pas encore assez de données';
+      document.getElementById('recWorstDayDate').textContent = '';
+      document.getElementById('recStreakSub').textContent = '';
+      return;
+    }
+    const changes = dailyKeys.slice(1).map((key, index) => ({ key, diff: entries[key] - entries[dailyKeys[index]] }));
+    const best = changes.reduce((a, b) => b.diff > a.diff ? b : a);
+    const worst = changes.reduce((a, b) => b.diff < a.diff ? b : a);
+    bestEl.textContent = '+' + formatCoins(best.diff);
+    document.getElementById('recBestDayDate').textContent = formatDateShort(best.key);
+    worstEl.textContent = formatCoins(worst.diff);
+    document.getElementById('recWorstDayDate').textContent = formatDateShort(worst.key);
+
+    let current = 0, longest = 0;
+    changes.forEach(change => {
+      current = change.diff > 0 ? current + 1 : 0;
+      longest = Math.max(longest, current);
+    });
+    streakEl.textContent = `${longest} jour${longest > 1 ? 's' : ''}`;
+    document.getElementById('recStreakSub').textContent = 'de gains consécutifs';
+  }
+
   function renderTable(){
     const keys = displayKeys();
     if(keys.length===0){
@@ -644,7 +680,7 @@
         deltaHtml = `<span class="delta-cell ${cls}">${diff>=0?'+':''}${formatCoins(diff)}</span>`;
       }
       rows += `<tr>
-        <td>${formatDateTime(k)}</td>
+        <td>${currentRange === 'day' ? formatDateTime(k) : formatDateShort(k)}</td>
         <td class="amt">${formatFull(amt)}</td>
         <td>${deltaHtml}</td>
         <td class="col-actions">
@@ -776,6 +812,22 @@
     ctx.lineCap = 'round';
     ctx.stroke();
 
+    if(trendToggle.checked){
+      const meanX = pts.reduce((sum, point) => sum + point.x, 0) / pts.length;
+      const meanY = pts.reduce((sum, point) => sum + point.y, 0) / pts.length;
+      const denominator = pts.reduce((sum, point) => sum + (point.x-meanX)**2, 0);
+      const slope = denominator ? pts.reduce((sum, point) => sum + (point.x-meanX)*(point.y-meanY), 0) / denominator : 0;
+      const intercept = meanY - slope*meanX;
+      ctx.beginPath();
+      ctx.setLineDash([5,4]);
+      ctx.moveTo(x(0), slope*x(0)+intercept);
+      ctx.lineTo(x(values.length-1), slope*x(values.length-1)+intercept);
+      ctx.strokeStyle = '#f2c14e';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
     for(let i=0;i<values.length;i++){
       ctx.beginPath();
       ctx.arc(x(i), y(values[i]), 3, 0, Math.PI*2);
@@ -810,7 +862,8 @@
         tooltip.style.opacity = '1';
         tooltip.style.left = x(closest)+'px';
         tooltip.style.top = y(values[closest])+'px';
-        tooltip.innerHTML = `<b>${formatDateTime(keys[closest])}</b> — ${formatFull(values[closest])} coins`;
+        const label = currentRange === 'day' ? formatDateTime(keys[closest]) : formatDateShort(keys[closest]);
+        tooltip.innerHTML = `<b>${label}</b> — ${formatFull(values[closest])} coins`;
       } else {
         tooltip.style.opacity = '0';
       }
@@ -856,6 +909,22 @@
     currentRange = btn.getAttribute('data-range');
     rangeTabs.querySelectorAll('button').forEach(b=>b.classList.toggle('active', b===btn));
     render();
+  });
+
+  trendToggle.addEventListener('change', renderChart);
+
+  exportCsvBtn.addEventListener('click', ()=>{
+    const rows = displayKeys().map(key => {
+      const date = currentRange === 'day' ? formatDateTime(key) : formatDateShort(key);
+      return `${date};${entries[key]}`;
+    });
+    const csv = '\uFEFFDate;Solde (coins)\n' + rows.join('\n');
+    const url = URL.createObjectURL(new Blob([csv], { type:'text/csv;charset=utf-8;' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `purse-tracker-${currentRange}.csv`;
+    link.click();
+    setTimeout(()=>URL.revokeObjectURL(url), 1000);
   });
 
   goalSaveBtn.addEventListener('click', ()=>{
