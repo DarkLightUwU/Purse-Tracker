@@ -164,8 +164,75 @@
 
   footer{text-align:center; color:var(--muted-2); font-size:12px; margin-top:26px;}
 
+  /* ---- thème clair ---- */
+  body.light-theme{
+    --bg: #f4f5f7;
+    --panel: #ffffff;
+    --border: #e2e5eb;
+    --border-soft: #edeff3;
+    --text: #16181c;
+    --muted: #666d78;
+    --muted-2: #99a0ab;
+    --accent: #16a34a;
+    --accent-dim: #dcf5e6;
+    --gold: #b7791f;
+    --red: #dc2626;
+  }
+  body.light-theme input{ background:#f7f8fa; }
+  body.light-theme .range-tabs{ background:#eef0f3; }
+  body.light-theme .tooltip{ background:#ffffff; box-shadow:0 6px 16px rgba(0,0,0,0.12); }
+
+  .theme-toggle{
+    background:transparent; border:1px solid var(--border); color:var(--muted);
+    width:34px; height:34px; padding:0; border-radius:8px;
+    display:flex; align-items:center; justify-content:center; font-size:16px;
+  }
+  .theme-toggle:hover{ color:var(--text); border-color:#3a4046; }
+  .head-actions{display:flex; align-items:flex-start; gap:14px;}
+
+  /* ---- objectif ---- */
+  .goal-row{display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-bottom:14px;}
+  #goalInput{width:170px;}
+  .progress-track{
+    width:100%; height:10px; border-radius:6px;
+    background:var(--border-soft); overflow:hidden; margin-bottom:10px;
+  }
+  .progress-fill{
+    height:100%; background:linear-gradient(90deg, var(--accent), var(--gold));
+    border-radius:6px; width:0%; transition:width .4s ease;
+  }
+  .goal-meta{display:flex; justify-content:space-between; font-size:12px; color:var(--muted); flex-wrap:wrap; gap:6px;}
+  .goal-meta b{color:var(--text); font-weight:600;}
+  #goalSaveBtn{background:var(--gold); color:#241a00;}
+  #goalSaveBtn:hover{filter:brightness(1.08);}
+
+  /* ---- records ---- */
+  .records{
+    display:grid; grid-template-columns:repeat(3,1fr); gap:1px;
+    background:var(--border); border:1px solid var(--border);
+    border-radius:10px; overflow:hidden; margin-bottom:16px;
+  }
+  .record{background:var(--panel); padding:14px 16px;}
+  .record .l{font-size:11px; color:var(--muted-2); font-weight:600; text-transform:uppercase; letter-spacing:.05em;}
+  .record .v{font-size:16px; margin-top:6px; font-weight:600;}
+  .record .d{font-size:11.5px; color:var(--muted); margin-top:2px;}
+
+  /* ---- checkbox tendance + export ---- */
+  .chart-actions{display:flex; align-items:center; gap:12px; flex-wrap:wrap;}
+  .checkbox-label{
+    display:flex; align-items:center; gap:6px;
+    font-size:12px; color:var(--muted); cursor:pointer; user-select:none;
+  }
+  .checkbox-label input{width:14px; height:14px; padding:0; accent-color:var(--accent);}
+  .ghost-btn{
+    background:transparent; color:var(--muted); border:1px solid var(--border);
+    font-size:12px; padding:6px 12px;
+  }
+  .ghost-btn:hover{color:var(--text); border-color:#3a4046;}
+
   @media (max-width:640px){
     .stats{grid-template-columns:repeat(2,1fr);}
+    .records{grid-template-columns:1fr;}
     .head{flex-direction:column;}
     .balance-box{text-align:left;}
     .panel h2{flex-direction:column; align-items:flex-start;}
@@ -180,10 +247,13 @@
       <h1>Purse Tracker</h1>
       <div class="sub">Hypixel Skyblock — évolution de ta fortune</div>
     </div>
-    <div class="balance-box">
-      <div class="label">Solde actuel</div>
-      <div class="value" id="currentBalance">—</div>
-      <div class="delta" id="currentDelta"></div>
+    <div class="head-actions">
+      <div class="balance-box">
+        <div class="label">Solde actuel</div>
+        <div class="value" id="currentBalance">—</div>
+        <div class="delta" id="currentDelta"></div>
+      </div>
+      <button class="theme-toggle" id="themeToggle" type="button" title="Changer de thème">🌙</button>
     </div>
   </div>
 
@@ -194,14 +264,40 @@
     <div class="stat"><div class="l">Entrées</div><div class="v" id="statCount">—</div></div>
   </div>
 
+  <div class="records" id="recordsRow">
+    <div class="record"><div class="l">Meilleure journée</div><div class="v" id="recBestDay">—</div><div class="d" id="recBestDayDate"></div></div>
+    <div class="record"><div class="l">Pire chute</div><div class="v" id="recWorstDay">—</div><div class="d" id="recWorstDayDate"></div></div>
+    <div class="record"><div class="l">Plus longue série</div><div class="v" id="recStreak">—</div><div class="d" id="recStreakSub"></div></div>
+  </div>
+
+  <div class="panel">
+    <h2>Objectif de richesse</h2>
+    <div class="goal-row">
+      <div class="field">
+        <label for="goalInput">Montant cible</label>
+        <input type="text" id="goalInput" placeholder="ex: 1b">
+      </div>
+      <button type="button" id="goalSaveBtn">Enregistrer</button>
+    </div>
+    <div class="progress-track"><div class="progress-fill" id="goalProgressFill"></div></div>
+    <div class="goal-meta">
+      <span id="goalProgressText">Aucun objectif défini</span>
+      <span id="goalEtaText"></span>
+    </div>
+  </div>
+
   <div class="panel">
     <h2>
       <span>Courbe</span>
-      <div class="range-tabs" id="rangeTabs">
-        <button data-range="day">Jour</button>
-        <button data-range="week">Semaine</button>
-        <button data-range="month">Mois</button>
-        <button data-range="all" class="active">Tout</button>
+      <div class="chart-actions">
+        <label class="checkbox-label"><input type="checkbox" id="trendToggle"> Tendance</label>
+        <button class="ghost-btn" id="exportCsvBtn" type="button">Exporter CSV</button>
+        <div class="range-tabs" id="rangeTabs">
+          <button data-range="day">Jour</button>
+          <button data-range="week">Semaine</button>
+          <button data-range="month">Mois</button>
+          <button data-range="all" class="active">Tout</button>
+        </div>
       </div>
     </h2>
     <div id="chartHolder">
@@ -328,7 +424,9 @@
       return `${hh}h${mi}`;
     }
     return formatDateShort(ts);
-  } = (typeof window.storage !== 'undefined' && window.storage);
+  }
+
+  const hasClaudeStorage = (typeof window.storage !== 'undefined' && window.storage);
 
   async function loadEntries(){
     try{
