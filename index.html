@@ -336,10 +336,15 @@
 <script>
 (function(){
   const STORAGE_KEY = 'purse_entries_v1';
+  const DELETED_KEYS_STORAGE_KEY = 'purse_deleted_entries_v1';
+  const GOAL_STORAGE_KEY = 'purse_goal_v1';
+  const THEME_STORAGE_KEY = 'purse_theme_v1';
   // entries: { 'ISO timestamp': amountNumber }
   // Entrées manuelles -> clé à midi (YYYY-MM-DDT12:00:00.000Z) pour rester 1/jour
   // Entrées automatiques (data.json) -> vrai timestamp, peuvent être multiples/jour
   let entries = {};
+  let deletedKeys = new Set();
+  let goal = null;
   let currentRange = 'all';
   let editingKey = null;
 
@@ -354,6 +359,12 @@
   const tooltip = document.getElementById('tooltip');
   const ctx = canvas.getContext('2d');
   const rangeTabs = document.getElementById('rangeTabs');
+  const goalInput = document.getElementById('goalInput');
+  const goalSaveBtn = document.getElementById('goalSaveBtn');
+  const goalProgressFill = document.getElementById('goalProgressFill');
+  const goalProgressText = document.getElementById('goalProgressText');
+  const goalEtaText = document.getElementById('goalEtaText');
+  const themeToggle = document.getElementById('themeToggle');
 
   const today = new Date();
   dateInput.value = today.toISOString().slice(0,10);
@@ -396,19 +407,19 @@
 
   function formatDateShort(ts){
     const dt = new Date(ts);
-    const dd = String(dt.getUTCDate()).padStart(2,'0');
-    const mm = String(dt.getUTCMonth()+1).padStart(2,'0');
-    const yy = String(dt.getUTCFullYear()).slice(2);
+    const dd = String(dt.getDate()).padStart(2,'0');
+    const mm = String(dt.getMonth()+1).padStart(2,'0');
+    const yy = String(dt.getFullYear()).slice(2);
     return `${dd}/${mm}/${yy}`;
   }
 
   function formatDateTime(ts){
     const dt = new Date(ts);
-    const dd = String(dt.getUTCDate()).padStart(2,'0');
-    const mm = String(dt.getUTCMonth()+1).padStart(2,'0');
-    const yy = String(dt.getUTCFullYear()).slice(2);
-    const hh = String(dt.getUTCHours()).padStart(2,'0');
-    const mi = String(dt.getUTCMinutes()).padStart(2,'0');
+    const dd = String(dt.getDate()).padStart(2,'0');
+    const mm = String(dt.getMonth()+1).padStart(2,'0');
+    const yy = String(dt.getFullYear()).slice(2);
+    const hh = String(dt.getHours()).padStart(2,'0');
+    const mi = String(dt.getMinutes()).padStart(2,'0');
     // pour les entrées manuelles (toujours à 12:00) on n'affiche pas l'heure
     if(hh==='12' && mi==='00'){
       return `${dd}/${mm}/${yy}`;
@@ -418,15 +429,34 @@
 
   function formatAxisLabel(ts, sameDay){
     const dt = new Date(ts);
-    if(sameDay){
-      const hh = String(dt.getUTCHours()).padStart(2,'0');
-      const mi = String(dt.getUTCMinutes()).padStart(2,'0');
-      return `${hh}h${mi}`;
-    }
-    return formatDateShort(ts);
+    const hh = String(dt.getHours()).padStart(2,'0');
+    const mi = String(dt.getMinutes()).padStart(2,'0');
+    return sameDay ? `${hh}h${mi}` : `${formatDateShort(ts)} ${hh}h${mi}`;
   }
 
   const hasClaudeStorage = (typeof window.storage !== 'undefined' && window.storage);
+
+  function readLocalSetting(key){
+    try { return localStorage.getItem(key); } catch(e) { return null; }
+  }
+
+  function writeLocalSetting(key, value){
+    try { localStorage.setItem(key, value); } catch(e) { console.error('Erreur de sauvegarde', e); }
+  }
+
+  function localDayKey(timestamp){
+    const date = new Date(timestamp);
+    return [date.getFullYear(), String(date.getMonth()+1).padStart(2,'0'), String(date.getDate()).padStart(2,'0')].join('-');
+  }
+
+  // Les vues sur plusieurs jours n'affichent que la dernière mesure de chaque jour.
+  function displayKeys(){
+    const keys = displayKeys();
+    if(currentRange === 'day') return keys;
+    const lastByDay = new Map();
+    keys.forEach(key => lastByDay.set(localDayKey(key), key));
+    return Array.from(lastByDay.values());
+  }
 
   async function loadEntries(){
     try{
@@ -441,6 +471,18 @@
       entries = {};
     }
 
+    try{
+      const rawDeleted = readLocalSetting(DELETED_KEYS_STORAGE_KEY);
+      deletedKeys = new Set(rawDeleted ? JSON.parse(rawDeleted) : []);
+      const rawGoal = readLocalSetting(GOAL_STORAGE_KEY);
+      goal = rawGoal ? Number(JSON.parse(rawGoal)) : null;
+      if(!Number.isFinite(goal) || goal <= 0) goal = null;
+      if(goal) goalInput.value = formatCoins(goal);
+    }catch(e){
+      deletedKeys = new Set();
+      goal = null;
+    }
+
     // Fusionne avec data.json (alimenté par GitHub Actions toutes les heures)
     try{
       const res = await fetch('./data.json', { cache: 'no-store' });
@@ -449,6 +491,8 @@
         entries = { ...entries, ...autoData };
       }
     }catch(e){ /* pas de data.json accessible : on ignore */ }
+
+    deletedKeys.forEach(key => delete entries[key]);
 
     render();
   }
@@ -484,6 +528,7 @@
     renderStats();
     renderTable();
     renderChart();
+    renderGoal();
   }
 
   function renderStats(){
@@ -515,7 +560,7 @@
     }
 
     // stats calculées sur la période sélectionnée
-    const keys = filteredKeys();
+    const keys = displayKeys();
     if(keys.length===0){
       document.getElementById('statTotal').textContent = '—';
       document.getElementById('statAvg').textContent = '—';
@@ -549,8 +594,41 @@
     document.getElementById('statCount').textContent = keys.length;
   }
 
+  function renderGoal(){
+    if(!goal){
+      goalProgressFill.style.width = '0%';
+      goalProgressText.textContent = 'Aucun objectif défini';
+      goalEtaText.textContent = '';
+      return;
+    }
+
+    const allKeys = sortedKeys();
+    const current = allKeys.length ? entries[allKeys[allKeys.length-1]] : 0;
+    const percent = Math.min(100, (current / goal) * 100);
+    goalProgressFill.style.width = `${percent}%`;
+    goalProgressText.innerHTML = `<b>${formatCoins(current)}</b> / ${formatCoins(goal)} (${Math.round(percent)} %)`;
+
+    if(current >= goal){
+      goalEtaText.textContent = 'Objectif atteint !';
+      return;
+    }
+
+    const dailyKeys = Array.from(new Map(allKeys.map(key => [localDayKey(key), key])).values());
+    if(dailyKeys.length < 2){
+      goalEtaText.textContent = `${formatCoins(goal-current)} restants`;
+      return;
+    }
+    const first = entries[dailyKeys[0]];
+    const last = entries[dailyKeys[dailyKeys.length-1]];
+    const elapsedDays = Math.max(1, (new Date(dailyKeys[dailyKeys.length-1]) - new Date(dailyKeys[0])) / 86400000);
+    const perDay = (last - first) / elapsedDays;
+    goalEtaText.textContent = perDay > 0
+      ? `Environ ${Math.ceil((goal-current)/perDay)} jour${Math.ceil((goal-current)/perDay)>1?'s':''} au rythme actuel`
+      : `${formatCoins(goal-current)} restants`;
+  }
+
   function renderTable(){
-    const keys = filteredKeys();
+    const keys = displayKeys();
     if(keys.length===0){
       tableHolder.innerHTML = '<div class="empty">Aucune entrée sur cette période.</div>';
       return;
@@ -598,6 +676,8 @@
       btn.addEventListener('click', async ()=>{
         const k = btn.getAttribute('data-del');
         delete entries[k];
+        deletedKeys.add(k);
+        writeLocalSetting(DELETED_KEYS_STORAGE_KEY, JSON.stringify(Array.from(deletedKeys)));
         await saveEntries();
         render();
       });
@@ -605,7 +685,7 @@
   }
 
   function renderChart(){
-    const keys = filteredKeys();
+    const keys = displayKeys();
     const dpr = window.devicePixelRatio || 1;
     const rect = chartHolder.getBoundingClientRect();
     canvas.width = rect.width*dpr;
@@ -629,7 +709,7 @@
     }
 
     const values = keys.map(k=>entries[k]);
-    const sameDay = keys.every(k => k.slice(0,10) === keys[0].slice(0,10));
+    const sameDay = keys.every(k => localDayKey(k) === localDayKey(keys[0]));
     const minV = Math.min(...values);
     const maxV = Math.max(...values);
     const pad = { l:56, r:14, t:16, b:28 };
@@ -637,7 +717,11 @@
     const h = rect.height - pad.t - pad.b;
     const range = (maxV-minV) || 1;
 
-    function x(i){ return pad.l + (keys.length===1?0:(i/(keys.length-1))*w); }
+    const times = keys.map(key => new Date(key).getTime());
+    const minTime = times[0];
+    const maxTime = times[times.length-1];
+    const timeRange = (maxTime-minTime) || 1;
+    function x(i){ return pad.l + ((times[i]-minTime)/timeRange)*w; }
     function y(v){ return pad.t + h - ((v-minV)/range)*h; }
 
     ctx.strokeStyle = '#1a1e22';
@@ -747,6 +831,8 @@
     } else {
       const k = manualKeyFromDate(dateInput.value);
       entries[k] = amt;
+      deletedKeys.delete(k);
+      writeLocalSetting(DELETED_KEYS_STORAGE_KEY, JSON.stringify(Array.from(deletedKeys)));
     }
     await saveEntries();
     resetForm();
@@ -771,6 +857,35 @@
     rangeTabs.querySelectorAll('button').forEach(b=>b.classList.toggle('active', b===btn));
     render();
   });
+
+  goalSaveBtn.addEventListener('click', ()=>{
+    const value = parseAmount(goalInput.value);
+    if(value === null || value <= 0){
+      goalInput.style.borderColor = 'var(--red)';
+      setTimeout(()=>{ goalInput.style.borderColor='var(--border)'; }, 900);
+      return;
+    }
+    goal = value;
+    writeLocalSetting(GOAL_STORAGE_KEY, JSON.stringify(goal));
+    goalInput.value = formatCoins(goal);
+    renderGoal();
+  });
+
+  function applyTheme(theme){
+    const isLight = theme === 'light';
+    document.body.classList.toggle('light-theme', isLight);
+    themeToggle.textContent = isLight ? '☀️' : '🌙';
+    themeToggle.title = isLight ? 'Passer au thème sombre' : 'Passer au thème clair';
+  }
+
+  themeToggle.addEventListener('click', ()=>{
+    const nextTheme = document.body.classList.contains('light-theme') ? 'dark' : 'light';
+    writeLocalSetting(THEME_STORAGE_KEY, nextTheme);
+    applyTheme(nextTheme);
+    renderChart();
+  });
+
+  applyTheme(readLocalSetting(THEME_STORAGE_KEY) || 'dark');
 
   window.addEventListener('resize', renderChart);
 
