@@ -451,7 +451,7 @@
 
   // Les vues sur plusieurs jours n'affichent que la dernière mesure de chaque jour.
   function displayKeys(){
-    const keys = displayKeys();
+    const keys = filteredKeys();
     if(currentRange === 'day') return keys;
     const lastByDay = new Map();
     keys.forEach(key => lastByDay.set(localDayKey(key), key));
