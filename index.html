@@ -436,6 +436,7 @@
   let entries = {};
   let deletedKeys = new Set();
   let goal = null;
+  let autoDataError = false;
   let currentRange = 'all';
   let editingKey = null;
 
@@ -586,12 +587,17 @@
   async function refreshAutoEntries(shouldRender = true){
     // Fusionne avec data.json (alimenté par GitHub Actions toutes les heures)
     try{
-      const res = await fetch('./data.json', { cache: 'no-store' });
+      const res = await fetch(`./data.json?updated=${Date.now()}`, { cache: 'no-store' });
       if(res.ok){
         const autoData = await res.json();
         entries = { ...entries, ...autoData };
+        autoDataError = false;
+      } else {
+        autoDataError = true;
       }
-    }catch(e){ /* pas de data.json accessible : on ignore */ }
+    }catch(e){
+      autoDataError = true;
+    }
 
     deletedKeys.forEach(key => delete entries[key]);
     if(shouldRender) render();
@@ -773,7 +779,9 @@
   function renderTable(){
     const keys = displayKeys();
     if(keys.length===0){
-      tableHolder.innerHTML = '<div class="empty">Aucune entrée sur cette période.</div>';
+      tableHolder.innerHTML = autoDataError
+        ? '<div class="empty">Impossible de charger les données automatiques. Vérifie que <b>data.json</b> est bien publié sur GitHub Pages.</div>'
+        : '<div class="empty">Aucune entrée sur cette période.</div>';
       return;
     }
     let rows = '';
@@ -966,4 +974,115 @@
         if(dist<bestDist){ bestDist=dist; closest=i; }
       }
       if(bestDist<28){
-        tooltip.s
+        tooltip.style.opacity = '1';
+        tooltip.style.left = x(closest)+'px';
+        tooltip.style.top = y(values[closest])+'px';
+        const label = currentRange === 'day' ? formatDateTime(keys[closest]) : formatDateShort(keys[closest]);
+        tooltip.innerHTML = `<b>${label}</b> — ${formatFull(values[closest])} coins`;
+      } else {
+        tooltip.style.opacity = '0';
+      }
+    };
+    canvas.onmouseleave = function(){ tooltip.style.opacity = '0'; };
+  }
+
+  form.addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    const amt = parseAmount(amountInput.value);
+    if(amt===null){
+      amountInput.style.borderColor = 'var(--red)';
+      setTimeout(()=>{ amountInput.style.borderColor='var(--border)'; }, 900);
+      return;
+    }
+    if(editingKey){
+      entries[editingKey] = amt;
+    } else {
+      const k = manualKeyFromDate(dateInput.value);
+      entries[k] = amt;
+      deletedKeys.delete(k);
+      writeLocalSetting(DELETED_KEYS_STORAGE_KEY, JSON.stringify(Array.from(deletedKeys)));
+    }
+    await saveEntries();
+    resetForm();
+    render();
+  });
+
+  cancelBtn.addEventListener('click', resetForm);
+
+  function resetForm(){
+    editingKey = null;
+    amountInput.value = '';
+    dateInput.value = today.toISOString().slice(0,10);
+    dateInput.disabled = false;
+    submitBtn.textContent = 'Ajouter';
+    cancelBtn.style.display = 'none';
+  }
+
+  rangeTabs.addEventListener('click', (e)=>{
+    const btn = e.target.closest('button[data-range]');
+    if(!btn) return;
+    currentRange = btn.getAttribute('data-range');
+    rangeTabs.querySelectorAll('button').forEach(b=>b.classList.toggle('active', b===btn));
+    render();
+  });
+
+  trendToggle.addEventListener('change', renderChart);
+
+  exportCsvBtn.addEventListener('click', ()=>{
+    const rows = displayKeys().map(key => {
+      const date = currentRange === 'day' ? formatDateTime(key) : formatDateShort(key);
+      return `${date};${entries[key]}`;
+    });
+    const csv = '\uFEFFDate;Solde (coins)\n' + rows.join('\n');
+    const url = URL.createObjectURL(new Blob([csv], { type:'text/csv;charset=utf-8;' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `purse-tracker-${currentRange}.csv`;
+    link.click();
+    setTimeout(()=>URL.revokeObjectURL(url), 1000);
+  });
+
+  goalSaveBtn.addEventListener('click', ()=>{
+    const value = parseAmount(goalInput.value);
+    if(value === null || value <= 0){
+      goalInput.style.borderColor = 'var(--red)';
+      setTimeout(()=>{ goalInput.style.borderColor='var(--border)'; }, 900);
+      return;
+    }
+    goal = value;
+    writeLocalSetting(GOAL_STORAGE_KEY, JSON.stringify(goal));
+    goalInput.value = formatCoins(goal);
+    renderGoal();
+  });
+
+  goalClearBtn.addEventListener('click', ()=>{
+    goal = null;
+    writeLocalSetting(GOAL_STORAGE_KEY, '');
+    goalInput.value = '';
+    renderGoal();
+  });
+
+  function applyTheme(theme){
+    const isLight = theme === 'light';
+    document.body.classList.toggle('light-theme', isLight);
+    themeToggle.textContent = isLight ? '☀️' : '🌙';
+    themeToggle.title = isLight ? 'Passer au thème sombre' : 'Passer au thème clair';
+  }
+
+  themeToggle.addEventListener('click', ()=>{
+    const nextTheme = document.body.classList.contains('light-theme') ? 'dark' : 'light';
+    writeLocalSetting(THEME_STORAGE_KEY, nextTheme);
+    applyTheme(nextTheme);
+    renderChart();
+  });
+
+  applyTheme(readLocalSetting(THEME_STORAGE_KEY) || 'dark');
+
+  window.addEventListener('resize', renderChart);
+
+  loadEntries();
+  setInterval(()=>refreshAutoEntries(), 5 * 60 * 1000);
+})();
+</script>
+</body>
+</html>
