@@ -320,7 +320,15 @@
     return `${dd}/${mm}/${yy} ${hh}h${mi}`;
   }
 
-  const hasClaudeStorage = (typeof window.storage !== 'undefined' && window.storage);
+  function formatAxisLabel(ts, sameDay){
+    const dt = new Date(ts);
+    if(sameDay){
+      const hh = String(dt.getUTCHours()).padStart(2,'0');
+      const mi = String(dt.getUTCMinutes()).padStart(2,'0');
+      return `${hh}h${mi}`;
+    }
+    return formatDateShort(ts);
+  } = (typeof window.storage !== 'undefined' && window.storage);
 
   async function loadEntries(){
     try{
@@ -523,6 +531,7 @@
     }
 
     const values = keys.map(k=>entries[k]);
+    const sameDay = keys.every(k => k.slice(0,10) === keys[0].slice(0,10));
     const minV = Math.min(...values);
     const maxV = Math.max(...values);
     const pad = { l:56, r:14, t:16, b:28 };
@@ -598,13 +607,13 @@
     ctx.fillStyle = '#5c626b';
     ctx.font = '10.5px -apple-system, sans-serif';
     ctx.textAlign = 'left';
-    ctx.fillText(formatDateShort(keys[0]), x(0)-10, rect.height-6);
+    ctx.fillText(formatAxisLabel(keys[0], sameDay), x(0)-10, rect.height-6);
     ctx.textAlign = 'right';
-    ctx.fillText(formatDateShort(keys[keys.length-1]), x(keys.length-1)+10, rect.height-6);
+    ctx.fillText(formatAxisLabel(keys[keys.length-1], sameDay), x(keys.length-1)+10, rect.height-6);
     if(keys.length>2){
       const midI = Math.floor((keys.length-1)/2);
       ctx.textAlign = 'center';
-      ctx.fillText(formatDateShort(keys[midI]), x(midI), rect.height-6);
+      ctx.fillText(formatAxisLabel(keys[midI], sameDay), x(midI), rect.height-6);
     }
 
     canvas.onmousemove = function(e){
