@@ -79,7 +79,17 @@
   .panel h2{
     font-size:13px; font-weight:600;
     color:var(--text); margin:0 0 16px 0;
+    display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;
   }
+
+  .range-tabs{display:flex; gap:4px; background:#0d1013; border:1px solid var(--border); border-radius:8px; padding:3px;}
+  .range-tabs button{
+    background:transparent; border:none; color:var(--muted);
+    font-size:12px; font-weight:600; padding:6px 12px; border-radius:6px;
+    cursor:pointer; font-family:inherit;
+  }
+  .range-tabs button.active{background:var(--accent); color:#052015;}
+  .range-tabs button:not(.active):hover{color:var(--text);}
 
   #chartHolder{width:100%; height:260px; position:relative;}
   canvas{width:100%; height:100%; display:block;}
@@ -113,6 +123,7 @@
   }
   input::placeholder{color:var(--muted-2);}
   input:focus{outline:none; border-color:#3a4046; box-shadow:0 0 0 3px rgba(255,255,255,0.04);}
+  input:disabled{opacity:.5;}
   #dateInput{width:150px;}
   #amountInput{width:170px;}
   button{
@@ -149,6 +160,7 @@
   .delta-cell.down{color:var(--red);}
   .amt{color:var(--gold); font-weight:600;}
   .col-actions{text-align:right;}
+  .src-auto{font-size:10px; color:var(--muted-2); margin-left:6px; border:1px solid var(--border); padding:1px 5px; border-radius:4px;}
 
   footer{text-align:center; color:var(--muted-2); font-size:12px; margin-top:26px;}
 
@@ -156,6 +168,7 @@
     .stats{grid-template-columns:repeat(2,1fr);}
     .head{flex-direction:column;}
     .balance-box{text-align:left;}
+    .panel h2{flex-direction:column; align-items:flex-start;}
   }
 </style>
 </head>
@@ -175,14 +188,22 @@
   </div>
 
   <div class="stats">
-    <div class="stat"><div class="l">Gain total</div><div class="v" id="statTotal">—</div></div>
-    <div class="stat"><div class="l">Moy. / jour</div><div class="v" id="statAvg">—</div></div>
-    <div class="stat"><div class="l">Meilleur jour</div><div class="v" id="statBest">—</div></div>
+    <div class="stat"><div class="l">Gain (période)</div><div class="v" id="statTotal">—</div></div>
+    <div class="stat"><div class="l">Moy. / variation</div><div class="v" id="statAvg">—</div></div>
+    <div class="stat"><div class="l">Meilleur gain</div><div class="v" id="statBest">—</div></div>
     <div class="stat"><div class="l">Entrées</div><div class="v" id="statCount">—</div></div>
   </div>
 
   <div class="panel">
-    <h2>Courbe</h2>
+    <h2>
+      <span>Courbe</span>
+      <div class="range-tabs" id="rangeTabs">
+        <button data-range="day">Jour</button>
+        <button data-range="week">Semaine</button>
+        <button data-range="month">Mois</button>
+        <button data-range="all" class="active">Tout</button>
+      </div>
+    </h2>
     <div id="chartHolder">
       <canvas id="chart"></canvas>
       <div class="tooltip" id="tooltip"></div>
@@ -203,7 +224,7 @@
       <button type="submit" id="submitBtn">Ajouter</button>
       <button type="button" id="cancelBtn">Annuler</button>
     </form>
-    <div class="hint">Nombre brut (12400000) ou notation courte (12.4m, 1.2b, 800k). Une seule entrée par date : ressaisir une date existante la met à jour.</div>
+    <div class="hint">Nombre brut (12400000) ou notation courte (12.4m, 1.2b, 800k). Une entrée manuelle par date (ressaisir une date existante la met à jour). Les mises à jour automatiques (GitHub Actions) peuvent elles s'ajouter plusieurs fois par jour.</div>
   </div>
 
   <div class="panel">
@@ -219,7 +240,12 @@
 <script>
 (function(){
   const STORAGE_KEY = 'purse_entries_v1';
-  let entries = {}; // { 'YYYY-MM-DD': amountNumber }
+  // entries: { 'ISO timestamp': amountNumber }
+  // Entrées manuelles -> clé à midi (YYYY-MM-DDT12:00:00.000Z) pour rester 1/jour
+  // Entrées automatiques (data.json) -> vrai timestamp, peuvent être multiples/jour
+  let entries = {};
+  let currentRange = 'all';
+  let editingKey = null;
 
   const dateInput = document.getElementById('dateInput');
   const amountInput = document.getElementById('amountInput');
@@ -231,9 +257,14 @@
   const canvas = document.getElementById('chart');
   const tooltip = document.getElementById('tooltip');
   const ctx = canvas.getContext('2d');
+  const rangeTabs = document.getElementById('rangeTabs');
 
   const today = new Date();
   dateInput.value = today.toISOString().slice(0,10);
+
+  function manualKeyFromDate(dateStr){
+    return dateStr + 'T12:00:00.000Z';
+  }
 
   function parseAmount(raw){
     if(raw==null) return null;
@@ -267,9 +298,26 @@
 
   function formatFull(n){ return n.toLocaleString('fr-FR'); }
 
-  function formatDate(d){
-    const [y,m,day] = d.split('-');
-    return `${day}/${m}/${y.slice(2)}`;
+  function formatDateShort(ts){
+    const dt = new Date(ts);
+    const dd = String(dt.getUTCDate()).padStart(2,'0');
+    const mm = String(dt.getUTCMonth()+1).padStart(2,'0');
+    const yy = String(dt.getUTCFullYear()).slice(2);
+    return `${dd}/${mm}/${yy}`;
+  }
+
+  function formatDateTime(ts){
+    const dt = new Date(ts);
+    const dd = String(dt.getUTCDate()).padStart(2,'0');
+    const mm = String(dt.getUTCMonth()+1).padStart(2,'0');
+    const yy = String(dt.getUTCFullYear()).slice(2);
+    const hh = String(dt.getUTCHours()).padStart(2,'0');
+    const mi = String(dt.getUTCMinutes()).padStart(2,'0');
+    // pour les entrées manuelles (toujours à 12:00) on n'affiche pas l'heure
+    if(hh==='12' && mi==='00'){
+      return `${dd}/${mm}/${yy}`;
+    }
+    return `${dd}/${mm}/${yy} ${hh}h${mi}`;
   }
 
   const hasClaudeStorage = (typeof window.storage !== 'undefined' && window.storage);
@@ -287,18 +335,14 @@
       entries = {};
     }
 
-    // Fusionne avec data.json si présent (alimenté par le job GitHub Actions
-    // toutes les heures). Les valeurs automatiques prennent le dessus sur
-    // les valeurs locales pour les mêmes dates.
+    // Fusionne avec data.json (alimenté par GitHub Actions toutes les heures)
     try{
       const res = await fetch('./data.json', { cache: 'no-store' });
       if(res.ok){
         const autoData = await res.json();
         entries = { ...entries, ...autoData };
       }
-    }catch(e){
-      // pas de data.json accessible (fichier local ou hors ligne) : on ignore
-    }
+    }catch(e){ /* pas de data.json accessible : on ignore */ }
 
     render();
   }
@@ -315,7 +359,20 @@
     }
   }
 
-  function sortedDates(){ return Object.keys(entries).sort(); }
+  function sortedKeys(){ return Object.keys(entries).sort(); }
+
+  function rangeCutoff(){
+    const now = Date.now();
+    if(currentRange==='day') return now - 24*3600*1000;
+    if(currentRange==='week') return now - 7*24*3600*1000;
+    if(currentRange==='month') return now - 30*24*3600*1000;
+    return -Infinity;
+  }
+
+  function filteredKeys(){
+    const cutoff = rangeCutoff();
+    return sortedKeys().filter(k => new Date(k).getTime() >= cutoff);
+  }
 
   function render(){
     renderStats();
@@ -324,11 +381,11 @@
   }
 
   function renderStats(){
-    const dates = sortedDates();
+    const allKeys = sortedKeys();
     const balanceEl = document.getElementById('currentBalance');
     const deltaEl = document.getElementById('currentDelta');
 
-    if(dates.length===0){
+    if(allKeys.length===0){
       balanceEl.textContent = '—';
       deltaEl.textContent = '';
       document.getElementById('statTotal').textContent = '—';
@@ -338,11 +395,12 @@
       return;
     }
 
-    const last = entries[dates[dates.length-1]];
+    const lastKey = allKeys[allKeys.length-1];
+    const last = entries[lastKey];
     balanceEl.textContent = formatCoins(last);
 
-    if(dates.length>=2){
-      const prev = entries[dates[dates.length-2]];
+    if(allKeys.length>=2){
+      const prev = entries[allKeys[allKeys.length-2]];
       const d = last - prev;
       deltaEl.textContent = (d>=0?'↑ +':'↓ ')+formatCoins(d)+' depuis la dernière entrée';
       deltaEl.className = 'delta '+(d>=0?'up':'down');
@@ -350,54 +408,65 @@
       deltaEl.textContent = '';
     }
 
-    const first = entries[dates[0]];
-    const totalGain = last-first;
+    // stats calculées sur la période sélectionnée
+    const keys = filteredKeys();
+    if(keys.length===0){
+      document.getElementById('statTotal').textContent = '—';
+      document.getElementById('statAvg').textContent = '—';
+      document.getElementById('statBest').textContent = '—';
+      document.getElementById('statCount').textContent = '0';
+      return;
+    }
+
+    const first = entries[keys[0]];
+    const lastInRange = entries[keys[keys.length-1]];
+    const totalGain = lastInRange-first;
     const totalEl = document.getElementById('statTotal');
     totalEl.textContent = (totalGain>=0?'+':'')+formatCoins(totalGain);
     totalEl.style.color = totalGain>=0 ? 'var(--accent)':'var(--red)';
 
-    let bestGain = -Infinity, bestDay = null;
+    let bestGain = -Infinity;
     let deltas = [];
-    for(let i=1;i<dates.length;i++){
-      const diff = entries[dates[i]] - entries[dates[i-1]];
+    for(let i=1;i<keys.length;i++){
+      const diff = entries[keys[i]] - entries[keys[i-1]];
       deltas.push(diff);
-      if(diff>bestGain){ bestGain=diff; bestDay=dates[i]; }
+      if(diff>bestGain) bestGain=diff;
     }
     if(deltas.length>0){
       const avg = deltas.reduce((a,b)=>a+b,0)/deltas.length;
       document.getElementById('statAvg').textContent = (avg>=0?'+':'')+formatCoins(Math.round(avg));
-      document.getElementById('statBest').textContent = bestDay ? formatCoins(bestGain) : '—';
+      document.getElementById('statBest').textContent = formatCoins(bestGain);
     } else {
       document.getElementById('statAvg').textContent = '—';
       document.getElementById('statBest').textContent = '—';
     }
-    document.getElementById('statCount').textContent = dates.length;
+    document.getElementById('statCount').textContent = keys.length;
   }
 
   function renderTable(){
-    const dates = sortedDates();
-    if(dates.length===0){
-      tableHolder.innerHTML = '<div class="empty">Aucune entrée pour le moment. Ajoute ton premier solde ci-dessus.</div>';
+    const keys = filteredKeys();
+    if(keys.length===0){
+      tableHolder.innerHTML = '<div class="empty">Aucune entrée sur cette période.</div>';
       return;
     }
     let rows = '';
-    for(let i=dates.length-1;i>=0;i--){
-      const d = dates[i];
-      const amt = entries[d];
+    for(let i=keys.length-1;i>=0;i--){
+      const k = keys[i];
+      const amt = entries[k];
       let deltaHtml = '<span style="color:var(--muted-2)">—</span>';
       if(i>0){
-        const diff = amt - entries[dates[i-1]];
+        const diff = amt - entries[keys[i-1]];
         const cls = diff>=0 ? 'up':'down';
         deltaHtml = `<span class="delta-cell ${cls}">${diff>=0?'+':''}${formatCoins(diff)}</span>`;
       }
       rows += `<tr>
-        <td>${formatDate(d)}</td>
+        <td>${formatDateTime(k)}</td>
         <td class="amt">${formatFull(amt)}</td>
         <td>${deltaHtml}</td>
         <td class="col-actions">
           <div class="rowbtns">
-            <button data-edit="${d}">Modifier</button>
-            <button data-del="${d}">Supprimer</button>
+            <button data-edit="${k}">Modifier</button>
+            <button data-del="${k}">Supprimer</button>
           </div>
         </td>
       </tr>`;
@@ -409,9 +478,11 @@
 
     tableHolder.querySelectorAll('[data-edit]').forEach(btn=>{
       btn.addEventListener('click', ()=>{
-        const d = btn.getAttribute('data-edit');
-        dateInput.value = d;
-        amountInput.value = entries[d];
+        const k = btn.getAttribute('data-edit');
+        editingKey = k;
+        dateInput.value = k.slice(0,10);
+        dateInput.disabled = true;
+        amountInput.value = entries[k];
         submitBtn.textContent = 'Mettre à jour';
         cancelBtn.style.display = 'inline-block';
         amountInput.focus();
@@ -419,8 +490,8 @@
     });
     tableHolder.querySelectorAll('[data-del]').forEach(btn=>{
       btn.addEventListener('click', async ()=>{
-        const d = btn.getAttribute('data-del');
-        delete entries[d];
+        const k = btn.getAttribute('data-del');
+        delete entries[k];
         await saveEntries();
         render();
       });
@@ -428,7 +499,7 @@
   }
 
   function renderChart(){
-    const dates = sortedDates();
+    const keys = filteredKeys();
     const dpr = window.devicePixelRatio || 1;
     const rect = chartHolder.getBoundingClientRect();
     canvas.width = rect.width*dpr;
@@ -436,14 +507,14 @@
     ctx.setTransform(dpr,0,0,dpr,0,0);
     ctx.clearRect(0,0,rect.width,rect.height);
 
-    if(dates.length===0){
+    if(keys.length===0){
       ctx.fillStyle = '#8a8f98';
       ctx.font = '13px -apple-system, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('Ajoute au moins une entrée pour voir la courbe', rect.width/2, rect.height/2);
+      ctx.fillText('Aucune entrée sur cette période', rect.width/2, rect.height/2);
       return;
     }
-    if(dates.length===1){
+    if(keys.length===1){
       ctx.fillStyle = '#8a8f98';
       ctx.font = '13px -apple-system, sans-serif';
       ctx.textAlign = 'center';
@@ -451,7 +522,7 @@
       return;
     }
 
-    const values = dates.map(d=>entries[d]);
+    const values = keys.map(k=>entries[k]);
     const minV = Math.min(...values);
     const maxV = Math.max(...values);
     const pad = { l:56, r:14, t:16, b:28 };
@@ -459,7 +530,7 @@
     const h = rect.height - pad.t - pad.b;
     const range = (maxV-minV) || 1;
 
-    function x(i){ return pad.l + (dates.length===1?0:(i/(dates.length-1))*w); }
+    function x(i){ return pad.l + (keys.length===1?0:(i/(keys.length-1))*w); }
     function y(v){ return pad.t + h - ((v-minV)/range)*h; }
 
     ctx.strokeStyle = '#1a1e22';
@@ -478,7 +549,6 @@
       ctx.fillText(formatCoins(Math.round(val)), pad.l-8, gy+3);
     }
 
-    // points pour la courbe lissée
     const pts = values.map((v,i)=>({x:x(i), y:y(v)}));
 
     function smoothPath(ctxPath, points){
@@ -496,7 +566,6 @@
       }
     }
 
-    // area fill
     ctx.beginPath();
     smoothPath(ctx, pts);
     ctx.lineTo(x(values.length-1), pad.t+h);
@@ -508,7 +577,6 @@
     ctx.fillStyle = grad;
     ctx.fill();
 
-    // line
     ctx.beginPath();
     smoothPath(ctx, pts);
     ctx.strokeStyle = '#34d399';
@@ -517,7 +585,6 @@
     ctx.lineCap = 'round';
     ctx.stroke();
 
-    // points
     for(let i=0;i<values.length;i++){
       ctx.beginPath();
       ctx.arc(x(i), y(values[i]), 3, 0, Math.PI*2);
@@ -531,20 +598,20 @@
     ctx.fillStyle = '#5c626b';
     ctx.font = '10.5px -apple-system, sans-serif';
     ctx.textAlign = 'left';
-    ctx.fillText(formatDate(dates[0]), x(0)-10, rect.height-6);
+    ctx.fillText(formatDateShort(keys[0]), x(0)-10, rect.height-6);
     ctx.textAlign = 'right';
-    ctx.fillText(formatDate(dates[dates.length-1]), x(dates.length-1)+10, rect.height-6);
-    if(dates.length>2){
-      const midI = Math.floor((dates.length-1)/2);
+    ctx.fillText(formatDateShort(keys[keys.length-1]), x(keys.length-1)+10, rect.height-6);
+    if(keys.length>2){
+      const midI = Math.floor((keys.length-1)/2);
       ctx.textAlign = 'center';
-      ctx.fillText(formatDate(dates[midI]), x(midI), rect.height-6);
+      ctx.fillText(formatDateShort(keys[midI]), x(midI), rect.height-6);
     }
 
     canvas.onmousemove = function(e){
       const r = canvas.getBoundingClientRect();
       const mx = e.clientX - r.left;
       let closest = 0, bestDist = Infinity;
-      for(let i=0;i<dates.length;i++){
+      for(let i=0;i<keys.length;i++){
         const dist = Math.abs(x(i)-mx);
         if(dist<bestDist){ bestDist=dist; closest=i; }
       }
@@ -552,7 +619,7 @@
         tooltip.style.opacity = '1';
         tooltip.style.left = x(closest)+'px';
         tooltip.style.top = y(values[closest])+'px';
-        tooltip.innerHTML = `<b>${formatDate(dates[closest])}</b> — ${formatFull(values[closest])} coins`;
+        tooltip.innerHTML = `<b>${formatDateTime(keys[closest])}</b> — ${formatFull(values[closest])} coins`;
       } else {
         tooltip.style.opacity = '0';
       }
@@ -562,14 +629,18 @@
 
   form.addEventListener('submit', async (e)=>{
     e.preventDefault();
-    const d = dateInput.value;
     const amt = parseAmount(amountInput.value);
-    if(!d || amt===null){
+    if(amt===null){
       amountInput.style.borderColor = 'var(--red)';
       setTimeout(()=>{ amountInput.style.borderColor='var(--border)'; }, 900);
       return;
     }
-    entries[d] = amt;
+    if(editingKey){
+      entries[editingKey] = amt;
+    } else {
+      const k = manualKeyFromDate(dateInput.value);
+      entries[k] = amt;
+    }
     await saveEntries();
     resetForm();
     render();
@@ -578,11 +649,21 @@
   cancelBtn.addEventListener('click', resetForm);
 
   function resetForm(){
+    editingKey = null;
     amountInput.value = '';
     dateInput.value = today.toISOString().slice(0,10);
+    dateInput.disabled = false;
     submitBtn.textContent = 'Ajouter';
     cancelBtn.style.display = 'none';
   }
+
+  rangeTabs.addEventListener('click', (e)=>{
+    const btn = e.target.closest('button[data-range]');
+    if(!btn) return;
+    currentRange = btn.getAttribute('data-range');
+    rangeTabs.querySelectorAll('button').forEach(b=>b.classList.toggle('active', b===btn));
+    render();
+  });
 
   window.addEventListener('resize', renderChart);
 
